@@ -172,23 +172,17 @@ public class DankBlock extends Block {
   }
 
   // 2. 获取待拾取物品（确保是ItemStack）
-  ItemStack toPickup = event.getItem().getItem().copy(); // 复制物品栈避免直接修改原对象
+  ItemStack toPickup = event.getItem().getItem().copy();
   final boolean isVoid = Utils.autoVoid(bag);
   PortableDankHandler inv = Utils.getHandler(bag);
 
   int initialCount = toPickup.getCount();
 
-  // 3. 遍历Dank存储槽位，尝试放入物品
+  // 3. 遍历Dank存储槽位，尝试放入物品（无论是否开启虚空，先尝试正常存入）
   for (int i = 0; i < inv.getSlots(); i++) {
     ItemStack stackInSlot = inv.getStackInSlot(i);
 
-    // 3.1 若开启虚空模式且物品匹配，直接清空待拾取物品
-    if (isVoid && !stackInSlot.isEmpty() && ItemStack.areItemsEqual(stackInSlot, toPickup) && ItemStack.areItemStackTagsEqual(stackInSlot, toPickup)) {
-      toPickup.setCount(0);
-      break;
-    }
-
-    // 3.2 若槽位为空且未开启虚空，直接放入
+    // 3.1 槽位为空且未开启虚空，直接放入
     if (stackInSlot.isEmpty() && !isVoid) {
       int addAmount = Math.min(toPickup.getCount(), inv.getStackLimit(i, toPickup));
       ItemStack toAdd = toPickup.splitStack(addAmount);
@@ -197,8 +191,17 @@ public class DankBlock extends Block {
       continue;
     }
 
-    // 3.3 若槽位物品匹配且未开启虚空，堆叠物品
-    if (!stackInSlot.isEmpty() && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
+    // 3.2 槽位物品匹配且未开启虚空，堆叠物品
+    if (!stackInSlot.isEmpty() && !isVoid && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
+      int remainingSpace = inv.stacklimit - stackInSlot.getCount();
+      int addAmount = Math.min(toPickup.getCount(), remainingSpace);
+      stackInSlot.grow(addAmount);
+      toPickup.shrink(addAmount);
+      if (toPickup.isEmpty()) break;
+    }
+
+    // 3.3 虚空模式下也尝试堆叠（仅当物品匹配时）
+    if (!stackInSlot.isEmpty() && isVoid && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
       int remainingSpace = inv.stacklimit - stackInSlot.getCount();
       int addAmount = Math.min(toPickup.getCount(), remainingSpace);
       stackInSlot.grow(addAmount);
@@ -207,22 +210,24 @@ public class DankBlock extends Block {
     }
   }
 
-  // 4. 更新物品状态并保存到NBT
+  // 4. 虚空模式：销毁溢出物品（存入后剩余的部分）
+  if (isVoid && !toPickup.isEmpty()) {
+    toPickup.setCount(0);
+  }
+
+  // 5. 更新物品状态并保存到NBT
   if (toPickup.getCount() != initialCount) {
-    // 更新实体物品的剩余数量
     event.getItem().setItem(toPickup);
-    // 保存Dank存储的变更
     inv.writeItemStack();
-    // 播放拾取音效
     EntityPlayer player = event.getEntityPlayer();
     player.world.playSound(null, player.posX, player.posY, player.posZ, 
       SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, 
       (player.getRNG().nextFloat() - player.getRNG().nextFloat()) * 0.7F + 1.0F);
   }
 
-  // 5. 若物品已被完全拾取/虚空，取消原拾取事件
+  // 6. 若物品已被完全处理，取消原拾取事件
   return toPickup.isEmpty();
-  }
+}
 
   public static boolean canAddItemToSlot(PortableDankHandler handler, ItemStack stackInSlot, ItemStack pickup, boolean stackSizeMatters) {
   if (stackInSlot.isEmpty()) return true; // 空槽位始终可放入
