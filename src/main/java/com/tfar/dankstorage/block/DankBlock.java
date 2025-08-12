@@ -166,68 +166,89 @@ public class DankBlock extends Block {
   }
 
   public static boolean onItemPickup(EntityItemPickupEvent event, ItemStack bag) {
-  // 1. 检查自动拾取是否开启
-  if (!bag.hasTagCompound() || !bag.getTagCompound().getBoolean("pickup")) {
-    return false;
-  }
-
-  // 2. 获取待拾取物品（确保是ItemStack）
-  ItemStack toPickup = event.getItem().getItem().copy();
-  final boolean isVoid = Utils.autoVoid(bag);
-  PortableDankHandler inv = Utils.getHandler(bag);
-
-  int initialCount = toPickup.getCount();
-
-  // 3. 遍历Dank存储槽位，尝试放入物品（无论是否开启虚空，先尝试正常存入）
-  for (int i = 0; i < inv.getSlots(); i++) {
-    ItemStack stackInSlot = inv.getStackInSlot(i);
-
-    // 3.1 槽位为空且未开启虚空，直接放入
-    if (stackInSlot.isEmpty() && !isVoid) {
-      int addAmount = Math.min(toPickup.getCount(), inv.getStackLimit(i, toPickup));
-      ItemStack toAdd = toPickup.splitStack(addAmount);
-      inv.setStackInSlot(i, toAdd);
-      if (toPickup.isEmpty()) break;
-      continue;
+    // 1. 检查自动拾取是否开启
+    if (!bag.hasTagCompound() || !bag.getTagCompound().getBoolean("pickup")) {
+        return false;
     }
 
-    // 3.2 槽位物品匹配且未开启虚空，堆叠物品
-    if (!stackInSlot.isEmpty() && !isVoid && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
-      int remainingSpace = inv.stacklimit - stackInSlot.getCount();
-      int addAmount = Math.min(toPickup.getCount(), remainingSpace);
-      stackInSlot.grow(addAmount);
-      toPickup.shrink(addAmount);
-      if (toPickup.isEmpty()) break;
+    // 2. 获取待拾取物品
+    ItemStack toPickup = event.getItem().getItem().copy();
+    final boolean isVoid = Utils.autoVoid(bag);
+    PortableDankHandler inv = Utils.getHandler(bag);
+
+    int initialCount = toPickup.getCount();
+
+    // 3. 扫描存储确认是否有匹配物品（关键修复：区分新物品类型）
+    boolean hasMatchingSlot = false;
+    for (int i = 0; i < inv.getSlots(); i++) {
+        ItemStack stackInSlot = inv.getStackInSlot(i);
+        if (!stackInSlot.isEmpty() && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
+            hasMatchingSlot = true;
+            break;
+        }
     }
 
-    // 3.3 虚空模式下也尝试堆叠（仅当物品匹配时）
-    if (!stackInSlot.isEmpty() && isVoid && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
-      int remainingSpace = inv.stacklimit - stackInSlot.getCount();
-      int addAmount = Math.min(toPickup.getCount(), remainingSpace);
-      stackInSlot.grow(addAmount);
-      toPickup.shrink(addAmount);
-      if (toPickup.isEmpty()) break;
+    // 4. 没有匹配槽位时：根据虚空模式决定行为
+    if (!hasMatchingSlot) {
+        // 关键修复：不匹配物品不拾取也不销毁
+        return false;
     }
-  }
 
-  // 4. 虚空模式：销毁溢出物品（存入后剩余的部分）
-  if (isVoid && !toPickup.isEmpty()) {
-    toPickup.setCount(0);
-  }
+    // 5. 仅处理匹配物品的拾取
+    boolean itemAdded = false;
+    for (int i = 0; i < inv.getSlots(); i++) {
+        ItemStack stackInSlot = inv.getStackInSlot(i);
 
-  // 5. 更新物品状态并保存到NBT
-  if (toPickup.getCount() != initialCount) {
-    event.getItem().setItem(toPickup);
-    inv.writeItemStack();
-    EntityPlayer player = event.getEntityPlayer();
-    player.world.playSound(null, player.posX, player.posY, player.posZ, 
-      SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, 
-      (player.getRNG().nextFloat() - player.getRNG().nextFloat()) * 0.7F + 1.0F);
-  }
+        // 5.1 只处理匹配的槽位（非空且物品匹配）
+        if (stackInSlot.isEmpty() || !canAddItemToSlot(inv, stackInSlot, toPickup, false)) {
+            continue;
+        }
 
-  // 6. 若物品已被完全处理，取消原拾取事件
-  return toPickup.isEmpty();
-}
+        // 5.2 计算可添加数量
+        int remainingSpace = inv.stacklimit - stackInSlot.getCount();
+        if (remainingSpace <= 0) {
+            continue; // 槽位已满，跳过
+        }
+
+        int addAmount = Math.min(toPickup.getCount(), remainingSpace);
+        stackInSlot.grow(addAmount);
+        toPickup.shrink(addAmount);
+        inv.setStackInSlot(i, stackInSlot); // 显式更新槽位
+        itemAdded = true;
+
+        if (toPickup.isEmpty()) {
+            break; // 物品已完全处理
+        }
+    }
+
+    // 6. 处理未拾取的匹配物品
+    boolean shouldPlaySound = false;
+    if (!toPickup.isEmpty()) {
+        if (isVoid) {
+            // 关键修复：仅销毁匹配物品的溢出部分
+            toPickup.setCount(0);
+            shouldPlaySound = itemAdded; // 如果有部分被添加才播放声音
+        }
+        // 非虚空模式：物品保留在地面上
+    } else {
+        shouldPlaySound = true;
+    }
+
+    // 7. 更新状态
+    if (itemAdded || (isVoid && toPickup.isEmpty())) {
+        event.getItem().setItem(toPickup);
+        inv.writeItemStack();
+    }
+
+    if (shouldPlaySound) {
+        EntityPlayer player = event.getEntityPlayer();
+        player.world.playSound(null, player.posX, player.posY, player.posZ, 
+                SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, 
+                (player.getRNG().nextFloat() - player.getRNG().nextFloat()) * 0.7F + 1.0F);
+    }
+
+    return toPickup.isEmpty();
+  }
 
   public static boolean canAddItemToSlot(PortableDankHandler handler, ItemStack stackInSlot, ItemStack pickup, boolean stackSizeMatters) {
   if (stackInSlot.isEmpty()) return true; // 空槽位始终可放入
