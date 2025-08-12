@@ -38,13 +38,13 @@ repositories {
     }
 
     maven {
-        url "http://maven.tterrag.com/" // The One Probe
+        url "https://modmaven.dev/" // The One Probe
     }
 }
 
 dependencies {
     deobfCompile "mezz.jei:jei_1.12.2:4.9.1.169"
-    deobfCompile "mcjty.theoneprobe:TheOneProbe-1.12:1.12-1.4.23-16"
+    deobfCompile "mcjty.theoneprobe:TheOneProbe-1.12:1.12-1.4.28-17"
 }
 
 processResources {

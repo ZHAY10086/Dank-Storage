@@ -166,63 +166,74 @@ public class DankBlock extends Block {
   }
 
   public static boolean onItemPickup(EntityItemPickupEvent event, ItemStack bag) {
+  // 1. 检查自动拾取是否开启
+  if (!bag.hasTagCompound() || !bag.getTagCompound().getBoolean("pickup")) {
+    return false;
+  }
 
-    if (!bag.hasTagCompound() || !bag.getTagCompound().getBoolean("pickup")) {
-      return false;
-    }
-    ItemStack toPickup = event.getItem().getItem();
-    final boolean isVoid = Utils.autoVoid(bag);
+  // 2. 获取待拾取物品（确保是ItemStack）
+  ItemStack toPickup = event.getItem().getItem().copy(); // 复制物品栈避免直接修改原对象
+  final boolean isVoid = Utils.autoVoid(bag);
+  PortableDankHandler inv = Utils.getHandler(bag);
 
-    if (true) {
-      if (false) {
-     //   toPickup.setCount(0);
-     //   bag.setAnimationsToGo(5);
-    //    PlayerEntity player = event.getEntityPlayer();
-      //  player.world.playSound(null, player.posX, player.posY, player.posZ, SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, (MathHelper.RANDOM.nextFloat() - MathHelper.RANDOM.nextFloat()) * 0.7F + 1.0F);
-        return true;
-        //todo watch for dupes
-      } else if (true) {
-        int count = toPickup.getCount();
-        PortableDankHandler inv = Utils.getHandler(bag);
-        for (int i = 0; i < inv.getSlots(); i++) {
-          ItemStack stackInSlot = inv.getStackInSlot(i);
-          if (stackInSlot.isEmpty()  && !isVoid) {
-            inv.setStackInSlot(i, toPickup.copy());
-            toPickup.setCount(toPickup.getCount() - inv.getStackLimit(i,toPickup));
-          } else if (canAddItemToSlot(inv,stackInSlot, toPickup,true)) {
-            int fill = inv.stacklimit - stackInSlot.getCount();
-            if (fill > toPickup.getCount()) {
-              stackInSlot.setCount(stackInSlot.getCount() + toPickup.getCount());
-            } else {
-              stackInSlot.setCount(inv.stacklimit);
-            }
-            if (!isVoid)
-            toPickup.splitStack(fill);
-            else if (toPickup.isItemEqual(stackInSlot) && ItemStack.areItemStackTagsEqual(stackInSlot, toPickup))
-              toPickup.setCount(0);
-          }
-          if (toPickup.isEmpty()) {
-            break;
-          }
-        }
-        if (toPickup.getCount() != count) {
-          bag.setAnimationsToGo(5);
-          EntityPlayer player = event.getEntityPlayer();
-          player.world.playSound(null, player.posX, player.posY, player.posZ, SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, ((player.getRNG().nextFloat() - player.getRNG().nextFloat()) * 0.7F + 1.0F) * 2.0F);
-          inv.writeItemStack();
-        }
-      }
+  int initialCount = toPickup.getCount();
+
+  // 3. 遍历Dank存储槽位，尝试放入物品
+  for (int i = 0; i < inv.getSlots(); i++) {
+    ItemStack stackInSlot = inv.getStackInSlot(i);
+
+    // 3.1 若开启虚空模式且物品匹配，直接清空待拾取物品
+    if (isVoid && !stackInSlot.isEmpty() && ItemStack.areItemsEqual(stackInSlot, toPickup) && ItemStack.areItemStackTagsEqual(stackInSlot, toPickup)) {
+      toPickup.setCount(0);
+      break;
     }
-    return toPickup.isEmpty();
+
+    // 3.2 若槽位为空且未开启虚空，直接放入
+    if (stackInSlot.isEmpty() && !isVoid) {
+      int addAmount = Math.min(toPickup.getCount(), inv.getStackLimit(i, toPickup));
+      ItemStack toAdd = toPickup.splitStack(addAmount);
+      inv.setStackInSlot(i, toAdd);
+      if (toPickup.isEmpty()) break;
+      continue;
+    }
+
+    // 3.3 若槽位物品匹配且未开启虚空，堆叠物品
+    if (!stackInSlot.isEmpty() && canAddItemToSlot(inv, stackInSlot, toPickup, true)) {
+      int remainingSpace = inv.stacklimit - stackInSlot.getCount();
+      int addAmount = Math.min(toPickup.getCount(), remainingSpace);
+      stackInSlot.grow(addAmount);
+      toPickup.shrink(addAmount);
+      if (toPickup.isEmpty()) break;
+    }
+  }
+
+  // 4. 更新物品状态并保存到NBT
+  if (toPickup.getCount() != initialCount) {
+    // 更新实体物品的剩余数量
+    event.getItem().setItem(toPickup);
+    // 保存Dank存储的变更
+    inv.writeItemStack();
+    // 播放拾取音效
+    EntityPlayer player = event.getEntityPlayer();
+    player.world.playSound(null, player.posX, player.posY, player.posZ, 
+      SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.PLAYERS, 0.2F, 
+      (player.getRNG().nextFloat() - player.getRNG().nextFloat()) * 0.7F + 1.0F);
+  }
+
+  // 5. 若物品已被完全拾取/虚空，取消原拾取事件
+  return toPickup.isEmpty();
   }
 
   public static boolean canAddItemToSlot(PortableDankHandler handler, ItemStack stackInSlot, ItemStack pickup, boolean stackSizeMatters) {
-    boolean isEmpty = stackInSlot.isEmpty();
+  if (stackInSlot.isEmpty()) return true; // 空槽位始终可放入
 
-    if (!isEmpty && pickup.isItemEqual(stackInSlot) && ItemStack.areItemStackTagsEqual(stackInSlot, pickup)) {
-      return stackInSlot.getCount() + (stackSizeMatters ? 0 : pickup.getCount()) <= handler.stacklimit;
-    }
+  // 物品类型、元数据、标签必须完全匹配
+  if (!ItemStack.areItemsEqual(stackInSlot, pickup) || !ItemStack.areItemStackTagsEqual(stackInSlot, pickup)) {
+    return false;
+  }
 
-    return isEmpty;
+  // 检查堆叠数量是否超过限制
+  int total = stackInSlot.getCount() + (stackSizeMatters ? 0 : pickup.getCount());
+  return total <= handler.stacklimit;
   }
 }
