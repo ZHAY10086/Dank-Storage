@@ -205,14 +205,7 @@ public class DankHandler extends ItemStackHandler {
           }
       }
   
-      // 更新原物品栈
-      if (!simulate && !remaining.isEmpty()) {
-          int consumed = stack.getCount() - remaining.getCount();
-          if (consumed > 0) {
-              stack.shrink(consumed);
-          }
-      }
-  
-      return remaining;
+      // 直接返回结果，避免修改原始栈
+      return remaining.isEmpty() ? ItemStack.EMPTY : remaining;
   }
 }
